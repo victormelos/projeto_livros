@@ -1,55 +1,39 @@
 package main
 
 import (
-	"database/sql"
 	"log"
-	"time"
+	"net/http"
+	"projeto_livros/database"
+	"projeto_livros/handlers"
 
-	_ "github.com/lib/pq"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 func main() {
-	var db *sql.DB
-	var err error
-	maxRetries := 5
-
-	for i := 0; i < maxRetries; i++ {
-		db, err = sql.Open("postgres", "postgres://root:root@db:5432/livros?sslmode=disable")
-		if err != nil {
-			log.Printf("Tentativa %d: Erro ao abrir conexão: %v", i+1, err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		err = db.Ping()
-		if err == nil {
-			log.Println("Conectado com sucesso ao banco de dados!")
-			break
-		}
-
-		log.Printf("Tentativa %d: Erro ao conectar: %v", i+1, err)
-		time.Sleep(5 * time.Second)
-	}
-
+	// Conectar ao banco de dados
+	db, err := database.ConnectDB()
 	if err != nil {
 		log.Fatal("Não foi possível conectar ao banco após várias tentativas")
 	}
 	defer db.Close()
 
-	// Criar tabela livros se não existir
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS livros (
-			id SERIAL PRIMARY KEY,
-			titulo VARCHAR(255) NOT NULL,
-			autor VARCHAR(255) NOT NULL,
-			ano_publicacao INTEGER
-		)
-	`)
-	if err != nil {
-		log.Fatal("Erro ao criar tabela:", err)
-	}
-	log.Println("Tabela 'livros' verificada/criada com sucesso!")
+	bookHandler := handlers.NewBookHandler(db)
 
-	// Manter a aplicação rodando
-	select {}
+	r := chi.NewRouter()
+
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	// Rotas
+	r.Route("/books", func(r chi.Router) {
+		r.Get("/", bookHandler.GetAllBooks)
+		r.Post("/create", bookHandler.CreateBook)
+		r.Get("/{id}", bookHandler.GetBook)
+		r.Delete("/{id}", bookHandler.DeleteBook)
+	})
+
+	// Iniciar servidor
+	log.Println("Servidor rodando na porta 3000")
+	log.Fatal(http.ListenAndServe(":3000", r))
 }

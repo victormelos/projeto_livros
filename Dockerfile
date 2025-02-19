@@ -2,17 +2,23 @@ FROM golang:1.21-alpine
 
 WORKDIR /app
 
-# Instalar dependências de build
+# Instalar dependências necessárias
 RUN apk add --no-cache gcc musl-dev
 
+# Copiar arquivos de dependência primeiro
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Copiar o resto do código
 COPY . .
 
-RUN go build -o main .
+# Compilar a aplicação
+RUN CGO_ENABLED=0 GOOS=linux go build -o main .
+
+# Configurar timezone
+RUN apk add --no-cache tzdata
+ENV TZ=America/Sao_Paulo
 
 EXPOSE 3000
 
-# Adicionar comando para ver logs
 CMD ["./main"]
