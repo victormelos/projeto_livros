@@ -13,6 +13,9 @@ import (
 type BookHandler struct {
 	db *sql.DB
 }
+type IDRequest struct {
+	ID string `json:"id"`
+}
 
 func NewBookHandler(db *sql.DB) *BookHandler {
 	return &BookHandler{db: db}
@@ -90,11 +93,6 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Estrutura para receber o ID no body
-type IDRequest struct {
-	ID string `json:"id"`
-}
-
 func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -153,5 +151,4 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
 }
