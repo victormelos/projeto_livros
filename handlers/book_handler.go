@@ -158,6 +158,7 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Livro não encontrado", http.StatusNotFound)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
 
 }
 
