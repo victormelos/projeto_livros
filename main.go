@@ -31,6 +31,7 @@ func main() {
 		r.Post("/create", bookHandler.CreateBook)
 		r.Get("/get", bookHandler.GetBook)
 		r.Delete("/delete", bookHandler.DeleteBook)
+		r.Put("/update", bookHandler.UpdateBook)
 	})
 
 	// Iniciar servidor

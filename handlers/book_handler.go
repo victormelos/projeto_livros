@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"projeto_livros/models"
@@ -28,6 +29,10 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
 		log.Printf("Erro ao decodificar JSON: %v", err)
 		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
+		return
+	}
+	if book.Name == "" || book.Quantity < 0 {
+		http.Error(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
@@ -96,6 +101,7 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 
 func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	defer r.Body.Close()
 
 	var req IDRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -103,7 +109,6 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	if req.ID == "" {
 		http.Error(w, "ID não fornecido", http.StatusBadRequest)
@@ -127,6 +132,7 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 
 func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	defer r.Body.Close()
 
 	var req IDRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -153,4 +159,48 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+}
+
+func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	defer r.Body.Close()
+
+	// Decodificar o livro atualizado do body
+	var book models.Book
+	if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
+		log.Printf("Erro ao decodificar JSON: %v", err)
+		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
+		return
+	}
+
+	if book.ID == "" {
+		http.Error(w, "ID não fornecido", http.StatusBadRequest)
+		return
+	}
+	if book.Name == "" || book.Quantity < 0 {
+		http.Error(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
+		return
+	}
+
+	// Atualizar o livro no banco de dados
+	query := `UPDATE livros SET name = $1, quantity = $2 WHERE id = $3`
+	result, err := h.db.Exec(query, book.Name, book.Quantity, book.ID)
+	if err != nil {
+		log.Printf("Erro ao atualizar livro: %v", err)
+		http.Error(w, "Erro ao atualizar livro", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "Livro não encontrado", http.StatusNotFound)
+		return
+	}
+
+	// Retornar o livro atualizado
+	response := map[string]string{
+		"message": fmt.Sprintf("Livro '%s' atualizado com sucesso", book.Name),
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
