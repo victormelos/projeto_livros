@@ -27,10 +27,10 @@ func main() {
 
 	// Rotas
 	r.Route("/books", func(r chi.Router) {
-		r.Get("/", bookHandler.GetAllBooks)
+		r.Get("/get-all", bookHandler.GetAllBooks)
 		r.Post("/create", bookHandler.CreateBook)
-		r.Get("/{id}", bookHandler.GetBook)
-		r.Delete("/{id}", bookHandler.DeleteBook)
+		r.Get("/get", bookHandler.GetBook)
+		r.Delete("/delete", bookHandler.DeleteBook)
 	})
 
 	// Iniciar servidor

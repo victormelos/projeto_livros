@@ -6,9 +6,7 @@ import (
 	"log"
 	"net/http"
 	"projeto_livros/models"
-	"strconv"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/segmentio/ksuid"
 )
 
@@ -92,20 +90,34 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Estrutura para receber o ID no body
+type IDRequest struct {
+	ID string `json:"id"`
+}
+
 func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		http.Error(w, "ID inválido", http.StatusBadRequest)
+	w.Header().Set("Content-Type", "application/json")
+
+	var req IDRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Erro ao decodificar JSON: %v", err)
+		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
+		return
+	}
+
+	if req.ID == "" {
+		http.Error(w, "ID não fornecido", http.StatusBadRequest)
 		return
 	}
 
 	var book models.Book
-	err = h.db.QueryRow("SELECT id, name, quantity FROM livros WHERE id = $1", id).
+	err := h.db.QueryRow("SELECT id, name, quantity FROM livros WHERE id = $1", req.ID).
 		Scan(&book.ID, &book.Name, &book.Quantity)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Livro não encontrado", http.StatusNotFound)
 		return
 	} else if err != nil {
+		log.Printf("Erro ao buscar livro: %v", err)
 		http.Error(w, "Erro ao buscar livro", http.StatusInternalServerError)
 		return
 	}
@@ -114,13 +126,21 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if id == "" {
-		http.Error(w, "ID inválido", http.StatusBadRequest)
+	w.Header().Set("Content-Type", "application/json")
+
+	var req IDRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Erro ao decodificar JSON: %v", err)
+		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
 
-	result, err := h.db.Exec("DELETE FROM livros WHERE id = $1", id)
+	if req.ID == "" {
+		http.Error(w, "ID não fornecido", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.db.Exec("DELETE FROM livros WHERE id = $1", req.ID)
 	if err != nil {
 		log.Printf("Erro ao deletar livro: %v", err)
 		http.Error(w, "Erro ao deletar livro", http.StatusInternalServerError)
