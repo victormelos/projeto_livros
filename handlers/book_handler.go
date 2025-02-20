@@ -30,6 +30,7 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
+	defer r.Body.Close()
 
 	// Gerar ID único usando ksuid
 	book.ID = ksuid.New().String()
@@ -102,6 +103,7 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
+	defer r.Body.Close()
 
 	if req.ID == "" {
 		http.Error(w, "ID não fornecido", http.StatusBadRequest)
