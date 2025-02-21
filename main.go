@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	// Conectar ao banco de dados
+
 	db, err := database.ConnectDB()
 	if err != nil {
 		log.Fatal("Não foi possível conectar ao banco após várias tentativas")
@@ -26,7 +26,6 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// Rotas
 	r.Route("/books", func(r chi.Router) {
 		r.Get("/get-all", bookHandler.GetAllBooks)
 		r.Post("/create", bookHandler.CreateBook)
@@ -41,7 +40,6 @@ func main() {
 		r.Post("/create", genreHandler.CreateGenre)
 	})
 
-	// Iniciar servidor
 	log.Println("Servidor rodando na porta 3000")
 	log.Fatal(http.ListenAndServe(":3000", r))
 }
