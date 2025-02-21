@@ -65,16 +65,31 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	if err := h.db.Ping(); err != nil {
-		log.Printf("Erro de conexão com o banco: %v", err)
-		http.Error(w, "Erro de conexão com o banco de dados", http.StatusInternalServerError)
-		return
+	// Obtém o genre_id da query string
+	genreID := r.URL.Query().Get("genre_id")
+
+	var (
+		query string
+		rows  *sql.Rows
+		err   error
+	)
+
+	// Define a query baseada na presença do genre_id
+	if genreID != "" {
+		query = `
+			SELECT l.id, l.name, l.quantity, l.genre_id 
+			FROM livros l 
+			WHERE l.genre_id = $1`
+		rows, err = h.db.Query(query, genreID)
+	} else {
+		query = `
+			SELECT l.id, l.name, l.quantity, l.genre_id 
+			FROM livros l`
+		rows, err = h.db.Query(query)
 	}
 
-	log.Println("Iniciando busca de livros...")
-	rows, err := h.db.Query("SELECT id, name, quantity FROM livros")
 	if err != nil {
-		log.Printf("Erro ao executar query: %v", err)
+		log.Printf("Erro ao buscar livros: %v", err)
 		http.Error(w, "Erro ao buscar livros", http.StatusInternalServerError)
 		return
 	}
@@ -83,10 +98,9 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	var books []models.Book
 	for rows.Next() {
 		var book models.Book
-		if err := rows.Scan(&book.ID, &book.Name, &book.Quantity); err != nil {
+		if err := rows.Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID); err != nil {
 			log.Printf("Erro ao ler dados do livro: %v", err)
-			http.Error(w, "Erro ao ler dados dos livros", http.StatusInternalServerError)
-			return
+			continue
 		}
 		books = append(books, book)
 	}
@@ -101,12 +115,7 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 		books = []models.Book{}
 	}
 
-	log.Printf("Encontrados %d livros", len(books))
-	if err := json.NewEncoder(w).Encode(books); err != nil {
-		log.Printf("Erro ao codificar resposta JSON: %v", err)
-		http.Error(w, "Erro ao gerar resposta", http.StatusInternalServerError)
-		return
-	}
+	json.NewEncoder(w).Encode(books)
 }
 
 func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {

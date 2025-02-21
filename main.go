@@ -38,6 +38,8 @@ func main() {
 	r.Route("/genres", func(r chi.Router) {
 		r.Get("/get-all", genreHandler.GetAllGenres)
 		r.Post("/create", genreHandler.CreateGenre)
+		r.Get("/books", genreHandler.GetBooksByGenre)
+
 	})
 
 	log.Println("Servidor rodando na porta 3000")
