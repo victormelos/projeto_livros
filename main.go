@@ -19,6 +19,7 @@ func main() {
 	defer db.Close()
 
 	bookHandler := handlers.NewBookHandler(db)
+	genreHandler := handlers.NewGenreHandler(db)
 
 	r := chi.NewRouter()
 
@@ -32,6 +33,12 @@ func main() {
 		r.Get("/get", bookHandler.GetBook)
 		r.Delete("/delete", bookHandler.DeleteBook)
 		r.Put("/update", bookHandler.UpdateBook)
+		r.Post("/add-all", bookHandler.CreateAllBooks)
+	})
+
+	r.Route("/genres", func(r chi.Router) {
+		r.Get("/get-all", genreHandler.GetAllGenres)
+		r.Post("/create", genreHandler.CreateGenre)
 	})
 
 	// Iniciar servidor

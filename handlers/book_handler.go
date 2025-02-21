@@ -31,18 +31,28 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
+
+	// Validações
 	if book.Name == "" || book.Quantity < 0 {
 		http.Error(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
-	// Gerar ID único usando ksuid
+	// Verificar se o gênero existe
+	if book.GenreID != "" {
+		var count int
+		err := h.db.QueryRow("SELECT COUNT(*) FROM genres WHERE id = $1", book.GenreID).Scan(&count)
+		if err != nil || count == 0 {
+			http.Error(w, "Gênero não encontrado", http.StatusBadRequest)
+			return
+		}
+	}
+
 	book.ID = ksuid.New().String()
 
-	query := `INSERT INTO livros (id, name, quantity) VALUES ($1, $2, $3) RETURNING id`
+	query := `INSERT INTO livros (id, name, quantity, genre_id) VALUES ($1, $2, $3, $4) RETURNING id`
 	var returnedID string
-	if err := h.db.QueryRow(query, book.ID, book.Name, book.Quantity).Scan(&returnedID); err != nil {
+	if err := h.db.QueryRow(query, book.ID, book.Name, book.Quantity, book.GenreID).Scan(&returnedID); err != nil {
 		log.Printf("Erro ao inserir livro: %v", err)
 		http.Error(w, "Erro ao criar livro", http.StatusInternalServerError)
 		return
@@ -204,4 +214,42 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+func (h *BookHandler) CreateAllBooks(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	defer r.Body.Close()
+
+	var books []models.Book
+	if err := json.NewDecoder(r.Body).Decode(&books); err != nil {
+		log.Printf("Erro ao decodificar JSON: %v", err)
+		http.Error(w, "Erro ao ler dados", http.StatusBadRequest)
+		return
+	}
+
+	var createdBooks []models.Book
+
+	for _, book := range books {
+		if book.Name == "" || book.Quantity < 0 {
+			http.Error(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
+			return
+		}
+
+		newID := ksuid.New().String()
+
+		query := `INSERT INTO livros (id, name, quantity) VALUES ($1, $2, $3) RETURNING id`
+		var returnedID string
+
+		if err := h.db.QueryRow(query, newID, book.Name, book.Quantity).Scan(&returnedID); err != nil {
+			log.Printf("Erro ao inserir livro: %v", err)
+			http.Error(w, "Erro ao criar livro", http.StatusInternalServerError)
+			return
+		}
+
+		book.ID = returnedID
+		createdBooks = append(createdBooks, book)
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(createdBooks)
 }
