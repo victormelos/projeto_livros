@@ -40,7 +40,7 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verificar se o gênero existe
-	if book.GenreID != "" {
+	if book.GenreID != nil {
 		var count int
 		err := h.db.QueryRow("SELECT COUNT(*) FROM genres WHERE id = $1", book.GenreID).Scan(&count)
 		if err != nil || count == 0 {
@@ -66,64 +66,48 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// Parâmetros de paginação com valores padrão
+	// Obter parâmetros dos headers
+	pageStr := r.Header.Get("X-Page")
+	perPageStr := r.Header.Get("X-Per-Page")
+
+	// Valores padrão
 	page := 1
 	perPage := 10
 
-	// Obter parâmetros da query
-	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+	// Converter e validar página
+	if pageStr != "" {
 		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
 			page = p
 		}
 	}
-	if perPageStr := r.URL.Query().Get("per_page"); perPageStr != "" {
-		if pp, err := strconv.Atoi(perPageStr); err == nil && pp > 0 && pp <= 100 {
+
+	// Converter e validar itens por página
+	if perPageStr != "" {
+		if pp, err := strconv.Atoi(perPageStr); err == nil && pp > 0 {
 			perPage = pp
 		}
 	}
 
-	offset := (page - 1) * perPage
-	genreID := r.URL.Query().Get("genre_id")
-
-	// Contar total de registros
+	// Contar total de livros
 	var total int
-	countQuery := "SELECT COUNT(*) FROM livros"
-	if genreID != "" {
-		countQuery += " WHERE genre_id = $1"
-		if err := h.db.QueryRow(countQuery, genreID).Scan(&total); err != nil {
-			log.Printf("Erro ao contar livros: %v", err)
-			http.Error(w, "Erro ao buscar livros", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		if err := h.db.QueryRow(countQuery).Scan(&total); err != nil {
-			log.Printf("Erro ao contar livros: %v", err)
-			http.Error(w, "Erro ao buscar livros", http.StatusInternalServerError)
-			return
-		}
+	err := h.db.QueryRow("SELECT COUNT(*) FROM livros").Scan(&total)
+	if err != nil {
+		log.Printf("Erro ao contar livros: %v", err)
+		http.Error(w, "Erro ao buscar livros", http.StatusInternalServerError)
+		return
 	}
 
-	// Query base
-	baseQuery := `
-		SELECT l.id, l.name, l.quantity, l.genre_id 
-		FROM livros l`
+	// Calcular offset
+	offset := (page - 1) * perPage
 
-	if genreID != "" {
-		baseQuery += " WHERE l.genre_id = $1"
-	}
+	// Query com LIMIT e OFFSET
+	query := `
+        SELECT id, name, quantity, genre_id 
+        FROM livros 
+        ORDER BY id 
+        LIMIT $1 OFFSET $2`
 
-	baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d",
-		map[bool]int{true: 2, false: 1}[genreID != ""],
-		map[bool]int{true: 3, false: 2}[genreID != ""])
-
-	var rows *sql.Rows
-	var err error
-	if genreID != "" {
-		rows, err = h.db.Query(baseQuery, genreID, perPage, offset)
-	} else {
-		rows, err = h.db.Query(baseQuery, perPage, offset)
-	}
-
+	rows, err := h.db.Query(query, perPage, offset)
 	if err != nil {
 		log.Printf("Erro ao buscar livros: %v", err)
 		http.Error(w, "Erro ao buscar livros", http.StatusInternalServerError)
@@ -136,11 +120,20 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 		var book models.Book
 		if err := rows.Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID); err != nil {
 			log.Printf("Erro ao ler dados do livro: %v", err)
-			continue
+			http.Error(w, "Erro ao ler dados dos livros", http.StatusInternalServerError)
+			return
 		}
 		books = append(books, book)
 	}
 
+	// Verificar erros após o loop
+	if err = rows.Err(); err != nil {
+		log.Printf("Erro após leitura dos dados: %v", err)
+		http.Error(w, "Erro ao processar dados dos livros", http.StatusInternalServerError)
+		return
+	}
+
+	// Calcular total de páginas
 	totalPages := (total + perPage - 1) / perPage
 
 	response := models.PaginationResponse{
