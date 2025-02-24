@@ -7,6 +7,7 @@ type Genre struct {
 }
 
 type GenreWithBooks struct {
-	Name  string `json:"name"`
-	Books []Book `json:"books"`
+	Name       string `json:"name"`
+	TotalBooks int    `json:"total_books"`
+	Books      []Book `json:"books"`
 }

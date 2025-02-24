@@ -22,90 +22,62 @@ func (h *GenreHandler) GetAllGenres(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	genreID := r.URL.Query().Get("genre_id")
-
-	var query string
-	var rows *sql.Rows
-	var err error
-
-	if genreID != "" {
-		query = `
-			SELECT g.name, g.description, 
-				   l.id, l.name, l.quantity
-			FROM genres g
-			LEFT JOIN livros l ON g.id = l.genre_id
-			WHERE g.id = $1
-			ORDER BY g.name`
-		rows, err = h.db.Query(query, genreID)
-	} else {
-		query = `
-			SELECT g.name, g.description, 
-				   l.id, l.name, l.quantity
-			FROM genres g
-			LEFT JOIN livros l ON g.id = l.genre_id
-			ORDER BY g.name`
-		rows, err = h.db.Query(query)
+	if genreID == "" {
+		http.Error(w, "ID do gênero é obrigatório", http.StatusBadRequest)
+		return
 	}
 
+	// Primeiro, verificar se o gênero existe e obter suas informações
+	var genreName, genreDescription string
+	err := h.db.QueryRow(`
+		SELECT name, description 
+		FROM genres 
+		WHERE id = $1`, genreID).Scan(&genreName, &genreDescription)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "Gênero não encontrado", http.StatusNotFound)
+		return
+	} else if err != nil {
+		log.Printf("Erro ao buscar gênero: %v", err)
+		http.Error(w, "Erro ao buscar gênero", http.StatusInternalServerError)
+		return
+	}
+
+	// Buscar todos os livros do gênero
+	query := `
+		SELECT l.id, l.name, l.quantity
+		FROM livros l
+		WHERE l.genre_id = $1
+		ORDER BY l.name`
+
+	rows, err := h.db.Query(query, genreID)
 	if err != nil {
-		log.Printf("Erro ao buscar gêneros: %v", err)
-		http.Error(w, "Erro ao buscar gêneros", http.StatusInternalServerError)
+		log.Printf("Erro ao buscar livros: %v", err)
+		http.Error(w, "Erro ao buscar livros", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	genresMap := make(map[string]*models.GenreWithBooks)
-
+	var books []models.Book
 	for rows.Next() {
-		var genreName, genreDescription string
-		var bookID, bookName sql.NullString
-		var bookQuantity sql.NullInt64
-
-		err := rows.Scan(
-			&genreName,
-			&genreDescription,
-			&bookID,
-			&bookName,
-			&bookQuantity,
-		)
+		var book models.Book
+		err := rows.Scan(&book.ID, &book.Name, &book.Quantity)
 		if err != nil {
 			log.Printf("Erro ao ler linha: %v", err)
 			continue
 		}
-
-		if _, exists := genresMap[genreName]; !exists {
-			genresMap[genreName] = &models.GenreWithBooks{
-				Name:  genreName,
-				Books: []models.Book{},
-			}
-		}
-
-		if bookID.Valid {
-			book := models.Book{
-				ID:       bookID.String,
-				Name:     bookName.String,
-				Quantity: int(bookQuantity.Int64),
-			}
-			genresMap[genreName].Books = append(genresMap[genreName].Books, book)
-		}
+		book.GenreID = &genreID
+		books = append(books, book)
 	}
 
-	var genres []models.GenreWithBooks
-	if genreID != "" {
-		for _, g := range genresMap {
-			genres = append(genres, *g)
-			break
-		}
-	} else {
-		for _, g := range genresMap {
-			genres = append(genres, *g)
-		}
+	// Criar o objeto GenreWithBooks
+	genreWithBooks := models.GenreWithBooks{
+		Name:       genreName,
+		TotalBooks: len(books),
+		Books:      books,
 	}
 
-	if genres == nil {
-		genres = []models.GenreWithBooks{}
-	}
-
-	json.NewEncoder(w).Encode(genres)
+	json.NewEncoder(w).Encode(genreWithBooks)
 }
 
 func (h *GenreHandler) CreateGenre(w http.ResponseWriter, r *http.Request) {
@@ -164,4 +136,5 @@ func (h *GenreHandler) GetBooksByGenre(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(books)
+
 }
