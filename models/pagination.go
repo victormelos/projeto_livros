@@ -1,12 +1,10 @@
 package models
-
 type PaginationRequest struct {
 	Page    int    `json:"page"`
 	PerPage int    `json:"per_page"`
 	Sort    string `json:"sort"`
 	Order   string `json:"order"`
 }
-
 type PaginationResponse struct {
 	Data       interface{} `json:"data"`
 	Pagination struct {
@@ -18,7 +16,6 @@ type PaginationResponse struct {
 		HasNext     bool `json:"has_next"`
 	} `json:"pagination"`
 }
-
 type PaginationMeta struct {
 	Links struct {
 		Self     string `json:"self"`

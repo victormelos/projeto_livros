@@ -2,50 +2,46 @@ version: '3.8'
 
 services:
   app:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
-    container_name: livros_app
     ports:
       - "3000:3000"
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     environment:
-      - DB_HOST=db
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - DB_NAME=livros
-      - DB_PORT=5432
-    networks:
-      - livros-network
+   # volumes:
+      # Atenção! Em muitos casos não se mapeia .:/app em produção 
+      # pois sobrescreve o binário dentro do container.
+      # Mas se for DEV, pode querer esse mapeamento para hot-reload (depende do seu setup).
+      #- .:/app
     restart: unless-stopped
 
-  db:
-    image: postgres:17-alpine
-    container_name: livros_postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: livros
+  postgres:
+    image: postgres:17
     ports:
       - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=livros
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - livros-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d livros"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
-
-networks:
-  livros-network:
-    driver: bridge
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 30s
 
 volumes:
   postgres_data:
-
