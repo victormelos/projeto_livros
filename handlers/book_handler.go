@@ -67,14 +67,28 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	book.ID = ksuid.New().String()
-	query := `INSERT INTO livros (id, name, quantity, genre_id) VALUES ($1, $2, $3, $4) RETURNING id`
+
+	log.Printf("Tentando criar livro: %s, Autor: %s", book.Name, book.Author)
+
+	// Incluir a coluna author na consulta SQL
+	query := `INSERT INTO livros (id, name, quantity, genre_id, author) VALUES ($1, $2, $3, $4, $5) RETURNING id`
+
+	log.Printf("Executando consulta SQL: %s", query)
+
 	var returnedID string
-	if err := h.db.QueryRow(query, book.ID, book.Name, book.Quantity, book.GenreID).Scan(&returnedID); err != nil {
+	if err := h.db.QueryRow(query, book.ID, book.Name, book.Quantity, book.GenreID, book.Author).Scan(&returnedID); err != nil {
 		log.Printf("Erro ao inserir livro: %v", err)
 		sendErrorResponse(w, "Erro ao criar livro", http.StatusInternalServerError)
 		return
 	}
+
+	// Garantir que title seja igual a name para compatibilidade
+	book.Title = book.Name
+
+	log.Printf("Livro criado com sucesso: %s, ID: %s, Autor: %s", book.Name, book.ID, book.Author)
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(book)
 }
@@ -82,23 +96,19 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// Support both header and query parameters for pagination
+	// Obter parâmetros de paginação
 	pageStr := r.URL.Query().Get("page")
-	if pageStr == "" {
-		pageStr = r.Header.Get("X-Page")
-	}
-
 	perPageStr := r.URL.Query().Get("per_page")
-	if perPageStr == "" {
-		perPageStr = r.Header.Get("X-Per-Page")
-	}
 
-	// Obter parâmetros de ordenação
+	// Parâmetros de ordenação
 	sortField := r.URL.Query().Get("sort_field")
 	sortDirection := r.URL.Query().Get("sort_direction")
 
+	// Valores padrão
 	page := 1
-	perPage := 10
+	perPage := 20
+
+	// Converter para inteiros se fornecidos
 	if pageStr != "" {
 		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
 			page = p
@@ -109,34 +119,37 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 			perPage = pp
 		}
 	}
-	var total int
-	err := h.db.QueryRow("SELECT COUNT(*) FROM livros").Scan(&total)
-	if err != nil {
-		log.Printf("Erro ao contar livros: %v", err)
-		sendErrorResponse(w, "Erro ao buscar livros", http.StatusInternalServerError)
-		return
-	}
+
+	// Calcular offset para paginação
 	offset := (page - 1) * perPage
 
-	// Construir a consulta SQL com ordenação dinâmica
-	orderClause := "id" // ordenação padrão
-
-	// Validar e ajustar parâmetros de ordenação
-	if sortField == "quantity" {
-		orderClause = "quantity"
-		if sortDirection == "desc" {
-			orderClause += " DESC"
-		} else {
-			orderClause += " ASC"
+	// Construir cláusula de ordenação
+	orderClause := "name ASC"
+	if sortField != "" {
+		// Validar campo de ordenação para evitar injeção SQL
+		validFields := map[string]bool{"name": true, "quantity": true}
+		if validFields[sortField] {
+			orderClause = sortField
+			if sortDirection == "desc" {
+				orderClause += " DESC"
+			} else {
+				orderClause += " ASC"
+			}
 		}
 	}
 
-	query := fmt.Sprintf(`
-        SELECT id, name, quantity, genre_id 
-        FROM livros 
-        ORDER BY %s 
-        LIMIT $1 OFFSET $2`, orderClause)
+	log.Printf("Buscando livros com ordenação: %s", orderClause)
 
+	// Incluir a coluna author na consulta SQL
+	query := fmt.Sprintf(`
+		SELECT id, name, quantity, genre_id, author 
+		FROM livros 
+		ORDER BY %s 
+		LIMIT $1 OFFSET $2`, orderClause)
+
+	log.Printf("Executando consulta SQL: %s", query)
+
+	// Executar a consulta
 	rows, err := h.db.Query(query, perPage, offset)
 	if err != nil {
 		log.Printf("Erro ao buscar livros: %v", err)
@@ -144,61 +157,107 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+
+	// Processar os resultados
 	var books []models.Book
 	for rows.Next() {
 		var book models.Book
-		if err := rows.Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID); err != nil {
+		var authorNull sql.NullString
+
+		if err := rows.Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID, &authorNull); err != nil {
 			log.Printf("Erro ao ler dados do livro: %v", err)
 			sendErrorResponse(w, "Erro ao ler dados dos livros", http.StatusInternalServerError)
 			return
 		}
-		// Adiciona o campo title para compatibilidade com frontend
+
+		// Converter author de NullString para string
+		if authorNull.Valid {
+			book.Author = authorNull.String
+		} else {
+			book.Author = ""
+		}
+
+		// Garantir que title seja igual a name para compatibilidade
 		book.Title = book.Name
+
 		books = append(books, book)
 	}
-	if err = rows.Err(); err != nil {
-		log.Printf("Erro após leitura dos dados: %v", err)
+
+	// Verificar erros após a iteração
+	if err := rows.Err(); err != nil {
+		log.Printf("Erro ao iterar sobre os resultados: %v", err)
 		sendErrorResponse(w, "Erro ao processar dados dos livros", http.StatusInternalServerError)
 		return
 	}
-	totalPages := (total + perPage - 1) / perPage
-	response := models.PaginationResponse{
-		Data: books,
+
+	// Contar o total de livros para paginação
+	var totalBooks int
+	if err := h.db.QueryRow("SELECT COUNT(*) FROM livros").Scan(&totalBooks); err != nil {
+		log.Printf("Erro ao contar livros: %v", err)
+		sendErrorResponse(w, "Erro ao contar livros", http.StatusInternalServerError)
+		return
 	}
-	response.Pagination.CurrentPage = page
-	response.Pagination.PerPage = perPage
-	response.Pagination.TotalItems = total
-	response.Pagination.TotalPages = totalPages
-	response.Pagination.HasPrevious = page > 1
-	response.Pagination.HasNext = page < totalPages
+
+	// Calcular o total de páginas
+	totalPages := (totalBooks + perPage - 1) / perPage
+
+	// Construir a resposta
+	response := map[string]interface{}{
+		"data":        books,
+		"page":        page,
+		"per_page":    perPage,
+		"total_books": totalBooks,
+		"total_pages": totalPages,
+	}
+
+	// Log detalhado para depuração
+	booksLog, _ := json.Marshal(books)
+	log.Printf("Dados dos livros (formato JSON): %s", string(booksLog))
+	log.Printf("Total de livros encontrados: %d", len(books))
+
+	for i, book := range books {
+		log.Printf("Livro #%d: ID=%s, Nome=%s, Autor=%s, Quantidade=%d",
+			i+1, book.ID, book.Name, book.Author, book.Quantity)
+	}
+
+	log.Printf("Retornando %d livros com sucesso", len(books))
+
+	// Enviar a resposta
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
 
 func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	id := chi.URLParam(r, "id")
+	// Obter ID do livro da URL ou parâmetros de consulta
+	var id string
 
-	// Se não tiver na URL, tenta extrair do corpo
-	if id == "" {
-		defer r.Body.Close()
-		var req IDRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			log.Printf("Erro ao decodificar JSON: %v", err)
-			sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
-			return
-		}
-		id = req.ID
+	// Verificar se estamos usando o novo padrão RESTful
+	vars := chi.URLParam(r, "id")
+	if vars != "" {
+		id = vars
+	} else {
+		// Fallback para o antigo método usando parâmetros de consulta
+		id = r.URL.Query().Get("id")
 	}
 
 	if id == "" {
-		sendErrorResponse(w, "ID não fornecido", http.StatusBadRequest)
+		sendErrorResponse(w, "ID do livro não fornecido", http.StatusBadRequest)
 		return
 	}
 
+	log.Printf("Buscando livro com ID: %s", id)
+
+	// Incluir a coluna author na consulta SQL
+	query := "SELECT id, name, quantity, genre_id, author FROM livros WHERE id = $1"
+
+	log.Printf("Executando consulta SQL: %s", query)
+
 	var book models.Book
-	err := h.db.QueryRow("SELECT id, name, quantity, genre_id FROM livros WHERE id = $1", id).
-		Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID)
+	var authorNull sql.NullString
+	err := h.db.QueryRow(query, id).Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID, &authorNull)
+
 	if err == sql.ErrNoRows {
 		sendErrorResponse(w, "Livro não encontrado", http.StatusNotFound)
 		return
@@ -208,9 +267,19 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Adiciona o campo title para compatibilidade com frontend
+	// Converter author de NullString para string
+	if authorNull.Valid {
+		book.Author = authorNull.String
+	} else {
+		book.Author = ""
+	}
+
+	// Garantir que title seja igual a name para compatibilidade
 	book.Title = book.Name
 
+	log.Printf("Livro encontrado com sucesso: %s", book.Name)
+
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(book)
 }
 
@@ -257,7 +326,7 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 
 func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	defer r.Body.Close()
+
 	var book models.Book
 	if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
 		log.Printf("Erro ao decodificar JSON: %v", err)
@@ -265,64 +334,85 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if title is provided but name is not
-	if book.Name == "" && book.Title != "" {
-		book.Name = book.Title
-	}
-
-	id := chi.URLParam(r, "id")
-	if id != "" {
-		book.ID = id
-	}
-
+	// Verificar se o ID foi fornecido
 	if book.ID == "" {
-		sendErrorResponse(w, "ID não fornecido", http.StatusBadRequest)
-		return
-	}
-	if book.Name == "" || book.Quantity < 0 {
-		sendErrorResponse(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
+		sendErrorResponse(w, "ID do livro não fornecido", http.StatusBadRequest)
 		return
 	}
 
-	// Verifica se o gênero existe, se fornecido
+	// Verificar se o livro existe
+	var exists bool
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM livros WHERE id = $1)", book.ID).Scan(&exists); err != nil {
+		log.Printf("Erro ao verificar existência do livro: %v", err)
+		sendErrorResponse(w, "Erro ao verificar existência do livro", http.StatusInternalServerError)
+		return
+	}
+
+	if !exists {
+		sendErrorResponse(w, "Livro não encontrado", http.StatusNotFound)
+		return
+	}
+
+	// Verificar se o gênero existe, se fornecido
 	if book.GenreID != nil {
-		var count int
-		err := h.db.QueryRow("SELECT COUNT(*) FROM genres WHERE id = $1", book.GenreID).Scan(&count)
-		if err != nil || count == 0 {
+		var genreExists bool
+		if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM genres WHERE id = $1)", *book.GenreID).Scan(&genreExists); err != nil {
+			log.Printf("Erro ao verificar existência do gênero: %v", err)
+			sendErrorResponse(w, "Erro ao verificar existência do gênero", http.StatusInternalServerError)
+			return
+		}
+
+		if !genreExists {
 			sendErrorResponse(w, "Gênero não encontrado", http.StatusBadRequest)
 			return
 		}
 	}
 
-	query := `UPDATE livros SET name = $1, quantity = $2, genre_id = $3 WHERE id = $4`
-	result, err := h.db.Exec(query, book.Name, book.Quantity, book.GenreID, book.ID)
+	log.Printf("Atualizando livro: %s, ID: %s", book.Name, book.ID)
+
+	// Incluir a coluna author na consulta SQL
+	query := `UPDATE livros SET name = $1, quantity = $2, genre_id = $3, author = $4 WHERE id = $5`
+
+	log.Printf("Executando consulta SQL: %s", query)
+
+	result, err := h.db.Exec(query, book.Name, book.Quantity, book.GenreID, book.Author, book.ID)
 	if err != nil {
 		log.Printf("Erro ao atualizar livro: %v", err)
 		sendErrorResponse(w, "Erro ao atualizar livro", http.StatusInternalServerError)
 		return
 	}
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		sendErrorResponse(w, "Livro não encontrado", http.StatusNotFound)
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Erro ao obter linhas afetadas: %v", err)
+		sendErrorResponse(w, "Erro ao atualizar livro", http.StatusInternalServerError)
 		return
 	}
-	response := map[string]string{
-		"message": fmt.Sprintf("Livro '%s' atualizado com sucesso", book.Name),
+
+	if rowsAffected == 0 {
+		sendErrorResponse(w, "Nenhum livro foi atualizado", http.StatusNotFound)
+		return
 	}
+
+	// Garantir que title seja igual a name para compatibilidade
+	book.Title = book.Name
+
+	log.Printf("Livro atualizado com sucesso: %s", book.Name)
+
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(book)
 }
 
 func (h *BookHandler) CreateAllBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	defer r.Body.Close()
 	var books []models.Book
 	if err := json.NewDecoder(r.Body).Decode(&books); err != nil {
 		log.Printf("Erro ao decodificar JSON: %v", err)
 		sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
-	var createdBooks []models.Book
+
+	createdBooks := []models.Book{}
 	for _, book := range books {
 		// Check if title is provided but name is not
 		if book.Name == "" && book.Title != "" {
@@ -330,33 +420,49 @@ func (h *BookHandler) CreateAllBooks(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if book.Name == "" || book.Quantity < 0 {
-			sendErrorResponse(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
-			return
+			continue
 		}
 
-		// Verifica se o gênero existe, se fornecido
 		if book.GenreID != nil {
 			var count int
 			err := h.db.QueryRow("SELECT COUNT(*) FROM genres WHERE id = $1", book.GenreID).Scan(&count)
 			if err != nil || count == 0 {
-				sendErrorResponse(w, "Gênero não encontrado", http.StatusBadRequest)
-				return
+				continue
 			}
 		}
 
 		newID := ksuid.New().String()
-		query := `INSERT INTO livros (id, name, quantity, genre_id) VALUES ($1, $2, $3, $4) RETURNING id`
-		var returnedID string
-		if err := h.db.QueryRow(query, newID, book.Name, book.Quantity, book.GenreID).Scan(&returnedID); err != nil {
-			log.Printf("Erro ao inserir livro: %v", err)
-			sendErrorResponse(w, "Erro ao criar livro", http.StatusInternalServerError)
-			return
+
+		log.Printf("Tentando criar livro em lote: %s, Autor: %s", book.Name, book.Author)
+
+		// Preparar o valor do autor (que pode ser NULL)
+		var authorValue interface{}
+		if book.Author == "" {
+			authorValue = nil
+		} else {
+			authorValue = book.Author
 		}
-		book.ID = returnedID
-		// Adiciona o campo title para compatibilidade com frontend
+
+		// Incluir a coluna author na consulta SQL
+		query := `INSERT INTO livros (id, name, quantity, genre_id, author) VALUES ($1, $2, $3, $4, $5) RETURNING id`
+
+		var returnedID string
+		if err := h.db.QueryRow(query, newID, book.Name, book.Quantity, book.GenreID, authorValue).Scan(&returnedID); err != nil {
+			log.Printf("Erro ao inserir livro: %v", err)
+			continue
+		}
+
+		book.ID = newID
+		// Garantir que title seja igual a name para compatibilidade
 		book.Title = book.Name
 		createdBooks = append(createdBooks, book)
 	}
+
+	response := map[string]interface{}{
+		"message": fmt.Sprintf("%d livros criados com sucesso", len(createdBooks)),
+		"books":   createdBooks,
+	}
+
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(createdBooks)
+	json.NewEncoder(w).Encode(response)
 }

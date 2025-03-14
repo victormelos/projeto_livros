@@ -79,7 +79,7 @@ const BookForm = () => {
     const { name, value } = e.target;
     setBook(prev => ({
       ...prev,
-      [name]: name === 'quantity' ? parseInt(value, 10) || 0 : value
+      [name]: name === 'quantity' ? parseInt(value, 20) || 0 : value
     }));
   };
 
@@ -106,7 +106,7 @@ const BookForm = () => {
         ...book,
         name: book.title || book.name,
         title: book.title || book.name,
-        quantity: parseInt(book.quantity, 10) || 0,
+        quantity: parseInt(book.quantity, 20) || 0,
         genre_id: book.genre_id || null
       };
       

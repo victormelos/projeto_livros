@@ -18,7 +18,7 @@ const BookList = () => {
       setLoading(true);
       setError(null);
       
-      const response = await bookService.getAllBooks(currentPage, 10);
+      const response = await bookService.getAllBooks(currentPage, 20);
       
       // Tratamento unificado para diferentes formatos de resposta
       if (response.data) {

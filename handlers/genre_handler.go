@@ -1,21 +1,25 @@
 package handlers
+
 import (
 	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
 	"projeto_livros/models"
+
 	"github.com/segmentio/ksuid"
 )
+
 type GenreHandler struct {
 	db *sql.DB
 }
+
 func NewGenreHandler(db *sql.DB) *GenreHandler {
 	return &GenreHandler{db: db}
 }
 func (h *GenreHandler) GetAllGenres(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	// Check if a specific genre_id is requested
 	genreID := r.URL.Query().Get("genre_id")
 	if genreID != "" {
@@ -33,7 +37,7 @@ func (h *GenreHandler) GetAllGenres(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Erro ao buscar gênero", http.StatusInternalServerError)
 			return
 		}
-		
+
 		query := `
 			SELECT l.id, l.name, l.quantity
 			FROM livros l
@@ -46,7 +50,7 @@ func (h *GenreHandler) GetAllGenres(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rows.Close()
-		
+
 		var books []models.Book
 		for rows.Next() {
 			var book models.Book
@@ -58,7 +62,7 @@ func (h *GenreHandler) GetAllGenres(w http.ResponseWriter, r *http.Request) {
 			book.GenreID = &genreID
 			books = append(books, book)
 		}
-		
+
 		genreWithBooks := models.GenreWithBooks{
 			Name:       genreName,
 			TotalBooks: len(books),
@@ -78,7 +82,7 @@ func (h *GenreHandler) GetAllGenres(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rows.Close()
-		
+
 		var genres []models.Genre
 		for rows.Next() {
 			var genre models.Genre
@@ -88,7 +92,7 @@ func (h *GenreHandler) GetAllGenres(w http.ResponseWriter, r *http.Request) {
 			}
 			genres = append(genres, genre)
 		}
-		
+
 		json.NewEncoder(w).Encode(genres)
 	}
 }
@@ -118,7 +122,7 @@ func (h *GenreHandler) GetBooksByGenre(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := `
-		SELECT l.id, l.name, l.quantity, l.genre_id 
+		SELECT l.id, l.name, l.quantity, l.genre_id, l.author 
 		FROM livros l 
 		WHERE l.genre_id = $1`
 	rows, err := h.db.Query(query, genreID)
@@ -131,10 +135,23 @@ func (h *GenreHandler) GetBooksByGenre(w http.ResponseWriter, r *http.Request) {
 	var books []models.Book
 	for rows.Next() {
 		var book models.Book
-		if err := rows.Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID); err != nil {
+		var authorNull sql.NullString
+
+		if err := rows.Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID, &authorNull); err != nil {
 			log.Printf("Erro ao ler livro: %v", err)
 			continue
 		}
+
+		// Converter author de NullString para string
+		if authorNull.Valid {
+			book.Author = authorNull.String
+		} else {
+			book.Author = ""
+		}
+
+		// Garantir que title seja igual a name para compatibilidade
+		book.Title = book.Name
+
 		books = append(books, book)
 	}
 	json.NewEncoder(w).Encode(books)
