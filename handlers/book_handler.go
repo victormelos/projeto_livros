@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"projeto_livros/models"
 	"strconv"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/segmentio/ksuid"
 )
@@ -48,12 +49,12 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 		sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Check if title is provided but name is not
 	if book.Name == "" && book.Title != "" {
 		book.Name = book.Title
 	}
-	
+
 	if book.Name == "" || book.Quantity < 0 {
 		sendErrorResponse(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
 		return
@@ -80,18 +81,22 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 
 func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	// Support both header and query parameters for pagination
 	pageStr := r.URL.Query().Get("page")
 	if pageStr == "" {
 		pageStr = r.Header.Get("X-Page")
 	}
-	
+
 	perPageStr := r.URL.Query().Get("per_page")
 	if perPageStr == "" {
 		perPageStr = r.Header.Get("X-Per-Page")
 	}
-	
+
+	// Obter parâmetros de ordenação
+	sortField := r.URL.Query().Get("sort_field")
+	sortDirection := r.URL.Query().Get("sort_direction")
+
 	page := 1
 	perPage := 10
 	if pageStr != "" {
@@ -112,11 +117,26 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	offset := (page - 1) * perPage
-	query := `
+
+	// Construir a consulta SQL com ordenação dinâmica
+	orderClause := "id" // ordenação padrão
+
+	// Validar e ajustar parâmetros de ordenação
+	if sortField == "quantity" {
+		orderClause = "quantity"
+		if sortDirection == "desc" {
+			orderClause += " DESC"
+		} else {
+			orderClause += " ASC"
+		}
+	}
+
+	query := fmt.Sprintf(`
         SELECT id, name, quantity, genre_id 
         FROM livros 
-        ORDER BY id 
-        LIMIT $1 OFFSET $2`
+        ORDER BY %s 
+        LIMIT $1 OFFSET $2`, orderClause)
+
 	rows, err := h.db.Query(query, perPage, offset)
 	if err != nil {
 		log.Printf("Erro ao buscar livros: %v", err)
@@ -156,9 +176,9 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 
 func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	id := chi.URLParam(r, "id")
-	
+
 	// Se não tiver na URL, tenta extrair do corpo
 	if id == "" {
 		defer r.Body.Close()
@@ -170,12 +190,12 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		}
 		id = req.ID
 	}
-	
+
 	if id == "" {
 		sendErrorResponse(w, "ID não fornecido", http.StatusBadRequest)
 		return
 	}
-	
+
 	var book models.Book
 	err := h.db.QueryRow("SELECT id, name, quantity, genre_id FROM livros WHERE id = $1", id).
 		Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID)
@@ -187,23 +207,23 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		sendErrorResponse(w, "Erro ao buscar livro", http.StatusInternalServerError)
 		return
 	}
-	
+
 	// Adiciona o campo title para compatibilidade com frontend
 	book.Title = book.Name
-	
+
 	json.NewEncoder(w).Encode(book)
 }
 
 func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	id := chi.URLParam(r, "id")
-	
+
 	// Verifica parâmetros de consulta se não encontrado nos parâmetros da URL
 	if id == "" {
 		id = r.URL.Query().Get("id")
 	}
-	
+
 	// Como último recurso, tenta ler do corpo da requisição
 	if id == "" {
 		defer r.Body.Close()
@@ -215,12 +235,12 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 		}
 		id = req.ID
 	}
-	
+
 	if id == "" {
 		sendErrorResponse(w, "ID não fornecido", http.StatusBadRequest)
 		return
 	}
-	
+
 	result, err := h.db.Exec("DELETE FROM livros WHERE id = $1", id)
 	if err != nil {
 		log.Printf("Erro ao deletar livro: %v", err)
@@ -244,17 +264,17 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 		sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Check if title is provided but name is not
 	if book.Name == "" && book.Title != "" {
 		book.Name = book.Title
 	}
-	
+
 	id := chi.URLParam(r, "id")
 	if id != "" {
 		book.ID = id
 	}
-	
+
 	if book.ID == "" {
 		sendErrorResponse(w, "ID não fornecido", http.StatusBadRequest)
 		return
@@ -263,7 +283,7 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 		sendErrorResponse(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Verifica se o gênero existe, se fornecido
 	if book.GenreID != nil {
 		var count int
@@ -273,7 +293,7 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	
+
 	query := `UPDATE livros SET name = $1, quantity = $2, genre_id = $3 WHERE id = $4`
 	result, err := h.db.Exec(query, book.Name, book.Quantity, book.GenreID, book.ID)
 	if err != nil {
@@ -308,12 +328,12 @@ func (h *BookHandler) CreateAllBooks(w http.ResponseWriter, r *http.Request) {
 		if book.Name == "" && book.Title != "" {
 			book.Name = book.Title
 		}
-		
+
 		if book.Name == "" || book.Quantity < 0 {
 			sendErrorResponse(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
 			return
 		}
-		
+
 		// Verifica se o gênero existe, se fornecido
 		if book.GenreID != nil {
 			var count int
@@ -323,7 +343,7 @@ func (h *BookHandler) CreateAllBooks(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		
+
 		newID := ksuid.New().String()
 		query := `INSERT INTO livros (id, name, quantity, genre_id) VALUES ($1, $2, $3, $4) RETURNING id`
 		var returnedID string

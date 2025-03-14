@@ -33,20 +33,20 @@ func main() {
 			w.Write([]byte("OK"))
 		})
 	})
-	
+
 	// Definição de rotas API
 	r.Group(func(r chi.Router) {
 		// Rotas de livros mais RESTful
 		r.Route("/api/books", func(r chi.Router) {
 			// Novos endpoints RESTful
-			r.Get("/", bookHandler.GetAllBooks)             // Lista todos os livros
-			r.Post("/", bookHandler.CreateBook)             // Cria um livro
-			r.Get("/{id}", bookHandler.GetBook)             // Busca um livro pelo ID
-			r.Put("/{id}", bookHandler.UpdateBook)          // Atualiza um livro
-			r.Delete("/{id}", bookHandler.DeleteBook)       // Remove um livro
-			r.Post("/batch", bookHandler.CreateAllBooks)    // Cria vários livros
+			r.Get("/", bookHandler.GetAllBooks)          // Lista todos os livros
+			r.Post("/", bookHandler.CreateBook)          // Cria um livro
+			r.Get("/{id}", bookHandler.GetBook)          // Busca um livro pelo ID
+			r.Put("/{id}", bookHandler.UpdateBook)       // Atualiza um livro
+			r.Delete("/{id}", bookHandler.DeleteBook)    // Remove um livro
+			r.Post("/batch", bookHandler.CreateAllBooks) // Cria vários livros
 		})
-		
+
 		// Mantém as rotas originais para compatibilidade
 		r.Route("/books", func(r chi.Router) {
 			r.Get("/get-all", bookHandler.GetAllBooks)
@@ -55,7 +55,7 @@ func main() {
 			r.Delete("/delete", bookHandler.DeleteBook)
 			r.Put("/update", bookHandler.UpdateBook)
 			r.Post("/add-all", bookHandler.CreateAllBooks)
-			
+
 			// Duplica os endpoints RESTful aqui também
 			r.Get("/", bookHandler.GetAllBooks)
 			r.Post("/", bookHandler.CreateBook)
@@ -63,20 +63,20 @@ func main() {
 			r.Put("/{id}", bookHandler.UpdateBook)
 			r.Delete("/{id}", bookHandler.DeleteBook)
 		})
-		
+
 		// Rotas de gêneros mais RESTful
 		r.Route("/api/genres", func(r chi.Router) {
-			r.Get("/", genreHandler.GetAllGenres)           // Lista todos os gêneros
-			r.Post("/", genreHandler.CreateGenre)           // Cria um gênero
+			r.Get("/", genreHandler.GetAllGenres)              // Lista todos os gêneros
+			r.Post("/", genreHandler.CreateGenre)              // Cria um gênero
 			r.Get("/{id}/books", genreHandler.GetBooksByGenre) // Livros de um gênero
 		})
-		
+
 		// Mantém as rotas originais para compatibilidade
 		r.Route("/genres", func(r chi.Router) {
 			r.Get("/get-all", genreHandler.GetAllGenres)
 			r.Post("/create", genreHandler.CreateGenre)
 			r.Get("/books", genreHandler.GetBooksByGenre)
-			
+
 			// Duplica os endpoints RESTful aqui também
 			r.Get("/", genreHandler.GetAllGenres)
 			r.Post("/", genreHandler.CreateGenre)
@@ -87,17 +87,17 @@ func main() {
 	// Servir arquivos estáticos do frontend
 	workDir, _ := os.Getwd()
 	frontendDir := filepath.Join(workDir, "../projeto_livros_frontend/build")
-	
+
 	// Verificar se o diretório existe
 	if _, err := os.Stat(frontendDir); os.IsNotExist(err) {
 		log.Printf("Aviso: Diretório do frontend não encontrado em %s", frontendDir)
 		frontendDir = "./frontend" // Tentar um caminho alternativo
 	}
-	
+
 	// Servir arquivos estáticos
 	filesDir := http.Dir(frontendDir)
 	FileServer(r, "/", filesDir)
-	
+
 	// Redirecionar todas as rotas não-API para o index.html para suportar React Router
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(frontendDir, "index.html"))
