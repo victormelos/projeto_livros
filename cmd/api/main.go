@@ -34,14 +34,18 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
+	// Endpoint direto para atualizar quantidade via query params
+	r.Get("/update-quantity", bookHandler.UpdateQuantityDirect)
+
 	// API routes using RESTful conventions
 	r.Route("/api/books", func(r chi.Router) {
-		r.Get("/", bookHandler.GetAllBooks)          // Lista todos os livros
-		r.Post("/", bookHandler.CreateBook)          // Cria um livro
-		r.Get("/{id}", bookHandler.GetBook)          // Busca um livro pelo ID
-		r.Put("/{id}", bookHandler.UpdateBook)       // Atualiza um livro
-		r.Delete("/{id}", bookHandler.DeleteBook)    // Remove um livro
-		r.Post("/batch", bookHandler.CreateAllBooks) // Cria vários livros
+		r.Get("/", bookHandler.GetAllBooks)                        // Lista todos os livros
+		r.Post("/", bookHandler.CreateBook)                        // Cria um livro
+		r.Post("/batch", bookHandler.CreateAllBooks)               // Cria vários livros
+		r.Get("/{id}", bookHandler.GetBook)                        // Busca um livro pelo ID
+		r.Put("/{id}", bookHandler.UpdateBook)                     // Atualiza um livro
+		r.Delete("/{id}", bookHandler.DeleteBook)                  // Remove um livro
+		r.Post("/update-quantity", bookHandler.UpdateBookQuantity) // Endpoint para atualização de quantidade
 	})
 
 	r.Route("/api/genres", func(r chi.Router) {

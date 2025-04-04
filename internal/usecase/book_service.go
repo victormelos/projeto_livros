@@ -33,8 +33,8 @@ func (s *BookServiceImpl) CreateBook(book *models.Book) error {
 		return errors.NewBadRequestError("O autor do livro é obrigatório")
 	}
 	// Garantir que a quantidade é um número válido
-	if book.Quantity < 0 {
-		return errors.NewBadRequestError("A quantidade não pode ser negativa")
+	if book.Quantity <= 0 {
+		return errors.NewBadRequestError("A quantidade deve ser maior que zero")
 	}
 
 	// Adicionar log para debug
@@ -123,9 +123,13 @@ func (s *BookServiceImpl) UpdateBook(book *models.Book) error {
 	if book.Author == "" {
 		return errors.NewBadRequestError("O autor do livro é obrigatório")
 	}
-	if book.Quantity < 0 {
-		return errors.NewBadRequestError("A quantidade não pode ser negativa")
+	if book.Quantity <= 0 {
+		return errors.NewBadRequestError("A quantidade deve ser maior que zero")
 	}
+
+	// Log para debug da quantidade
+	log.Printf("DEBUG - SERVICE - Quantidade recebida para atualização no serviço: %d", book.Quantity)
+
 	var exists bool
 	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM livros WHERE id = $1)", book.ID).Scan(&exists)
 	if err != nil {
@@ -135,16 +139,41 @@ func (s *BookServiceImpl) UpdateBook(book *models.Book) error {
 		return errors.NewNotFoundError("Livro não encontrado")
 	}
 
+	// Verificar quantidade atual para comparação
+	var currentQuantity int
+	err = s.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", book.ID).Scan(&currentQuantity)
+	if err == nil {
+		log.Printf("DEBUG - SERVICE - Quantidade atual no banco: %d, Nova quantidade solicitada: %d",
+			currentQuantity, book.Quantity)
+	}
+
+	// Garantir que o valor não seja alterado acidentalmente
+	originalQuantity := book.Quantity
+
 	// Modificar a query para usar apenas os campos necessários
 	query := `UPDATE livros 
               SET name = $1, author = $2, quantity = $3, genre_id = $4 
               WHERE id = $5`
 
 	// Adicionar log para debug
-	log.Printf("DEBUG - Quantidade recebida para atualização no serviço: %d", book.Quantity)
+	log.Printf("DEBUG - SERVICE - Quantidade sendo enviada para o banco de dados no serviço: %d", originalQuantity)
 
 	// Usar os valores corretos para cada campo
-	_, err = s.db.Exec(query, book.Name, book.Author, book.Quantity, book.GenreID, book.ID)
+	_, err = s.db.Exec(query, book.Name, book.Author, originalQuantity, book.GenreID, book.ID)
+
+	// Verificar valor após atualização
+	if err == nil {
+		var newQuantity int
+		errCheck := s.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", book.ID).Scan(&newQuantity)
+		if errCheck == nil {
+			log.Printf("DEBUG - SERVICE - Quantidade após atualização no banco: %d", newQuantity)
+			if newQuantity != originalQuantity {
+				log.Printf("ALERTA - Inconsistência detectada! Valor esperado: %d, Valor armazenado: %d",
+					originalQuantity, newQuantity)
+			}
+		}
+	}
+
 	return err
 }
 func (s *BookServiceImpl) DeleteBook(id string) error {
