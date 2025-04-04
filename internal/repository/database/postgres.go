@@ -1,12 +1,15 @@
 package database
+
 import (
 	"database/sql"
 	"fmt"
 	"log"
-	"projeto_livros/config"
+	"projeto_livros/internal/config"
 	"time"
+
 	_ "github.com/lib/pq"
 )
+
 func ConnectDB() (*sql.DB, error) {
 	cfg, err := config.LoadConfig()
 	if err != nil {

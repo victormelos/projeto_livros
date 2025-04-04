@@ -1,11 +1,14 @@
 package validators
+
 import (
 	"encoding/json"
 	"net/http"
-	"projeto_livros/errors"
-	"projeto_livros/models"
+	"projeto_livros/internal/domain/errors"
+	"projeto_livros/internal/domain/models"
+
 	"strings"
 )
+
 func ValidateBookInput(r *http.Request) (*models.Book, error) {
 	defer r.Body.Close()
 	var book models.Book

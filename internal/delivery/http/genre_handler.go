@@ -1,11 +1,11 @@
-package handlers
+package http
 
 import (
 	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
-	"projeto_livros/models"
+	"projeto_livros/internal/domain/models"
 
 	"github.com/segmentio/ksuid"
 )

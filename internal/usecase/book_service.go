@@ -3,8 +3,8 @@ package services
 import (
 	"database/sql"
 	"log"
-	"projeto_livros/errors"
-	"projeto_livros/models"
+	"projeto_livros/internal/domain/errors"
+	"projeto_livros/internal/domain/models"
 
 	"github.com/segmentio/ksuid"
 )

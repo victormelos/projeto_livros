@@ -2,7 +2,7 @@ package repositories
 
 import (
 	"database/sql"
-	"projeto_livros/models"
+	"projeto_livros/internal/domain/models"
 )
 
 type BookRepository interface {

@@ -1,4 +1,4 @@
-package handlers
+package http
 
 import (
 	"database/sql"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"projeto_livros/models"
+	"projeto_livros/internal/domain/models"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
