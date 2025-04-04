@@ -46,11 +46,11 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 	var book models.Book
 	if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
 		log.Printf("Erro ao decodificar JSON: %v", err)
-		sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
+		sendErrorResponse(w, "Erro ao ler dados do livro", http.StatusBadRequest)
 		return
 	}
 
-	// Check if title is provided but name is not
+	// Usar Title como fallback para Name se necessário
 	if book.Name == "" && book.Title != "" {
 		book.Name = book.Title
 	}
@@ -72,6 +72,12 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Tentando criar livro: %s, Autor: %s", book.Name, book.Author)
 
+	// Logging detalhado para debug
+	log.Printf("DEBUG - Criando livro - Título: %s", book.Name)
+	// Adicionar no handler CreateBook
+	log.Printf("DEBUG - Quantidade recebida: %v (tipo: %T)", book.Quantity, book.Quantity)
+	log.Printf("DEBUG - Quantidade recebida para criação: %d (tipo: %T)", book.Quantity, book.Quantity)
+
 	// Incluir a coluna author na consulta SQL
 	query := `INSERT INTO livros (id, name, quantity, genre_id, author) VALUES ($1, $2, $3, $4, $5) RETURNING id`
 
@@ -84,8 +90,8 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Garantir que title seja igual a name para compatibilidade
-	book.Title = book.Name
+	// Não precisamos mais definir book.Title = book.Name aqui
+	// pois o frontend espera o campo Title
 
 	log.Printf("Livro criado com sucesso: %s, ID: %s, Autor: %s", book.Name, book.ID, book.Author)
 
@@ -177,7 +183,7 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 			book.Author = ""
 		}
 
-		// Garantir que title seja igual a name para compatibilidade
+		// Definir Title igual a Name para compatibilidade com o frontend
 		book.Title = book.Name
 
 		books = append(books, book)
@@ -324,6 +330,7 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// No método UpdateBook
 func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -333,6 +340,10 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 		sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
+
+	// Log detalhado para debug
+	log.Printf("DEBUG - Livro recebido para atualização - ID: %s, Nome: %s", book.ID, book.Name)
+	log.Printf("DEBUG - Quantidade recebida no payload JSON: %d (tipo: %T)", book.Quantity, book.Quantity)
 
 	// Verificar se o ID foi fornecido
 	if book.ID == "" {
@@ -368,12 +379,13 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("Atualizando livro: %s, ID: %s", book.Name, book.ID)
+	log.Printf("Atualizando livro: %s, ID: %s, Quantidade: %d", book.Name, book.ID, book.Quantity)
 
-	// Incluir a coluna author na consulta SQL
+	// Usar apenas o campo Name para atualização
 	query := `UPDATE livros SET name = $1, quantity = $2, genre_id = $3, author = $4 WHERE id = $5`
 
-	log.Printf("Executando consulta SQL: %s", query)
+	// Adicionar log para debug
+	log.Printf("DEBUG - Quantidade sendo enviada para o banco de dados: %d", book.Quantity)
 
 	result, err := h.db.Exec(query, book.Name, book.Quantity, book.GenreID, book.Author, book.ID)
 	if err != nil {
@@ -394,7 +406,7 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Garantir que title seja igual a name para compatibilidade
+	// Definir Title igual a Name para compatibilidade com o frontend
 	book.Title = book.Name
 
 	log.Printf("Livro atualizado com sucesso: %s", book.Name)

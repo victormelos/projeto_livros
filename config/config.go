@@ -1,10 +1,13 @@
 package config
+
 import (
 	"fmt"
 	"log"
 	"os"
+
 	"github.com/joho/godotenv"
 )
+
 type Config struct {
 	DBHost     string
 	DBPort     string
@@ -12,6 +15,7 @@ type Config struct {
 	DBPassword string
 	DBName     string
 }
+
 func LoadConfig() (*Config, error) {
 	if err := godotenv.Load(); err != nil {
 		log.Println("Arquivo .env não encontrado, usando variáveis de ambiente do sistema")

@@ -28,70 +28,49 @@ func main() {
 	r.Use(middleware.CorsMiddleware)
 	// Temporarily comment out the auth middleware for testing
 	// r.Use(middleware.AuthMiddleware)
-	r.Group(func(r chi.Router) {
-		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("OK"))
-		})
+
+	// Health check endpoint
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("OK"))
 	})
 
-	// Definição de rotas API
-	r.Group(func(r chi.Router) {
-		// Rotas de livros mais RESTful
-		r.Route("/api/books", func(r chi.Router) {
-			// Novos endpoints RESTful
-			r.Get("/", bookHandler.GetAllBooks)          // Lista todos os livros
-			r.Post("/", bookHandler.CreateBook)          // Cria um livro
-			r.Get("/{id}", bookHandler.GetBook)          // Busca um livro pelo ID
-			r.Put("/{id}", bookHandler.UpdateBook)       // Atualiza um livro
-			r.Delete("/{id}", bookHandler.DeleteBook)    // Remove um livro
-			r.Post("/batch", bookHandler.CreateAllBooks) // Cria vários livros
-		})
+	// API routes using RESTful conventions
+	r.Route("/api/books", func(r chi.Router) {
+		r.Get("/", bookHandler.GetAllBooks)          // Lista todos os livros
+		r.Post("/", bookHandler.CreateBook)          // Cria um livro
+		r.Get("/{id}", bookHandler.GetBook)          // Busca um livro pelo ID
+		r.Put("/{id}", bookHandler.UpdateBook)       // Atualiza um livro
+		r.Delete("/{id}", bookHandler.DeleteBook)    // Remove um livro
+		r.Post("/batch", bookHandler.CreateAllBooks) // Cria vários livros
+	})
 
-		// Mantém as rotas originais para compatibilidade
-		r.Route("/books", func(r chi.Router) {
-			r.Get("/get-all", bookHandler.GetAllBooks)
-			r.Post("/create", bookHandler.CreateBook)
-			r.Get("/get", bookHandler.GetBook)
-			r.Delete("/delete", bookHandler.DeleteBook)
-			r.Put("/update", bookHandler.UpdateBook)
-			r.Post("/add-all", bookHandler.CreateAllBooks)
-
-			// Duplica os endpoints RESTful aqui também
-			r.Get("/", bookHandler.GetAllBooks)
-			r.Post("/", bookHandler.CreateBook)
-			r.Get("/{id}", bookHandler.GetBook)
-			r.Put("/{id}", bookHandler.UpdateBook)
-			r.Delete("/{id}", bookHandler.DeleteBook)
-		})
-
-		// Rotas de gêneros mais RESTful
-		r.Route("/api/genres", func(r chi.Router) {
-			r.Get("/", genreHandler.GetAllGenres)              // Lista todos os gêneros
-			r.Post("/", genreHandler.CreateGenre)              // Cria um gênero
-			r.Get("/{id}/books", genreHandler.GetBooksByGenre) // Livros de um gênero
-		})
-
-		// Mantém as rotas originais para compatibilidade
-		r.Route("/genres", func(r chi.Router) {
-			r.Get("/get-all", genreHandler.GetAllGenres)
-			r.Post("/create", genreHandler.CreateGenre)
-			r.Get("/books", genreHandler.GetBooksByGenre)
-
-			// Duplica os endpoints RESTful aqui também
-			r.Get("/", genreHandler.GetAllGenres)
-			r.Post("/", genreHandler.CreateGenre)
-			r.Get("/{id}/books", genreHandler.GetBooksByGenre)
-		})
+	r.Route("/api/genres", func(r chi.Router) {
+		r.Get("/", genreHandler.GetAllGenres)              // Lista todos os gêneros
+		r.Post("/", genreHandler.CreateGenre)              // Cria um gênero
+		r.Get("/{id}/books", genreHandler.GetBooksByGenre) // Livros de um gênero
 	})
 
 	// Servir arquivos estáticos do frontend
 	workDir, _ := os.Getwd()
-	frontendDir := filepath.Join(workDir, "../projeto_livros_frontend/build")
+	var frontendDir string
 
-	// Verificar se o diretório existe
-	if _, err := os.Stat(frontendDir); os.IsNotExist(err) {
-		log.Printf("Aviso: Diretório do frontend não encontrado em %s", frontendDir)
-		frontendDir = "./frontend" // Tentar um caminho alternativo
+	// Verificar os possíveis locais do frontend em ordem de prioridade
+	possiblePaths := []string{
+		filepath.Join(workDir, "../front-end/build"), // Desenvolvimento local
+		"../front-end/build",                         // Relativo à raiz
+		"./frontend",                                 // Dentro do container Docker
+	}
+
+	for _, path := range possiblePaths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			frontendDir = path
+			break
+		}
+	}
+
+	if frontendDir == "" {
+		log.Printf("Aviso: Diretório do frontend não encontrado em nenhum local esperado")
+		frontendDir = "./frontend" // Fallback padrão
 	}
 
 	// Servir arquivos estáticos

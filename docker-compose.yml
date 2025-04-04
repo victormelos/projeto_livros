@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3001:3001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -16,11 +16,8 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - DB_NAME=livros
-   # volumes:
-      # Atenção! Em muitos casos não se mapeia .:/app em produção 
-      # pois sobrescreve o binário dentro do container.
-      # Mas se for DEV, pode querer esse mapeamento para hot-reload (depende do seu setup).
-      #- .:/app
+    volumes:
+      - ../front-end/build:/app/frontend
     restart: unless-stopped
 
   postgres:
