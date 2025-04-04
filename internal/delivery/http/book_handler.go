@@ -1,13 +1,16 @@
 package http
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"projeto_livros/internal/domain/models"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/segmentio/ksuid"
@@ -55,8 +58,8 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 		book.Name = book.Title
 	}
 
-	if book.Name == "" || book.Quantity < 0 {
-		sendErrorResponse(w, "Nome vazio ou quantidade negativa não permitidos", http.StatusBadRequest)
+	if book.Name == "" || book.Quantity <= 0 {
+		sendErrorResponse(w, "Nome vazio ou quantidade inválida. A quantidade deve ser maior que zero.", http.StatusBadRequest)
 		return
 	}
 	if book.GenreID != nil {
@@ -144,16 +147,16 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("Buscando livros com ordenação: %s", orderClause)
+	log.Printf("DEBUG - LISTAGEM: Buscando livros com ordenação: %s", orderClause)
 
-	// Incluir a coluna author na consulta SQL
+	// IMPORTANTE: Buscar livros SEM MODIFICAR os valores originais
 	query := fmt.Sprintf(`
 		SELECT id, name, quantity, genre_id, author 
 		FROM livros 
 		ORDER BY %s 
 		LIMIT $1 OFFSET $2`, orderClause)
 
-	log.Printf("Executando consulta SQL: %s", query)
+	log.Printf("DEBUG - LISTAGEM: Executando query SQL: %s", query)
 
 	// Executar a consulta
 	rows, err := h.db.Query(query, perPage, offset)
@@ -170,6 +173,7 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 		var book models.Book
 		var authorNull sql.NullString
 
+		// Log para cada linha lida do banco
 		if err := rows.Scan(&book.ID, &book.Name, &book.Quantity, &book.GenreID, &authorNull); err != nil {
 			log.Printf("Erro ao ler dados do livro: %v", err)
 			sendErrorResponse(w, "Erro ao ler dados dos livros", http.StatusInternalServerError)
@@ -185,6 +189,10 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 
 		// Definir Title igual a Name para compatibilidade com o frontend
 		book.Title = book.Name
+
+		// Log detalhado para cada livro encontrado na busca
+		log.Printf("DEBUG - LISTAGEM: Livro encontrado - ID: %s, Nome: %s, Quantidade (direto do banco): %d",
+			book.ID, book.Name, book.Quantity)
 
 		books = append(books, book)
 	}
@@ -217,16 +225,12 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log detalhado para depuração
-	booksLog, _ := json.Marshal(books)
-	log.Printf("Dados dos livros (formato JSON): %s", string(booksLog))
-	log.Printf("Total de livros encontrados: %d", len(books))
-
 	for i, book := range books {
-		log.Printf("Livro #%d: ID=%s, Nome=%s, Autor=%s, Quantidade=%d",
+		log.Printf("DEBUG - LISTAGEM: Livro #%d (antes de enviar resposta): ID=%s, Nome=%s, Autor=%s, Quantidade=%d",
 			i+1, book.ID, book.Name, book.Author, book.Quantity)
 	}
 
-	log.Printf("Retornando %d livros com sucesso", len(books))
+	log.Printf("DEBUG - LISTAGEM: Retornando %d livros", len(books))
 
 	// Enviar a resposta
 	w.WriteHeader(http.StatusOK)
@@ -253,7 +257,11 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Buscando livro com ID: %s", id)
+	// Limpar o ID para garantir que não tenha caracteres extras
+	parts := strings.Split(id, ":")
+	id = parts[0] // Pegar apenas a parte antes de : (se houver)
+
+	log.Printf("Buscando livro com ID (limpo): %s", id)
 
 	// Incluir a coluna author na consulta SQL
 	query := "SELECT id, name, quantity, genre_id, author FROM livros WHERE id = $1"
@@ -330,20 +338,207 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// No método UpdateBook
+// UpdateBook atualiza um livro existente
 func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var book models.Book
-	if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
-		log.Printf("Erro ao decodificar JSON: %v", err)
+	// Ler o corpo da requisição
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("Erro ao ler corpo da requisição: %v", err)
+		sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	// Debugging - imprimir o corpo completo da requisição
+	log.Printf("DEBUG - CORPO COMPLETO da requisição de atualização: %s", string(bodyBytes))
+
+	// Primeiro extrair ID do livro da URL
+	var bookID string
+	// Tentar obter da URL RESTful primeiro
+	if chi.URLParam(r, "id") != "" {
+		bookID = chi.URLParam(r, "id")
+	} else {
+		// Se não encontrar na URL, verificar no corpo da requisição
+		var requestData map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &requestData); err != nil {
+			log.Printf("Erro ao decodificar JSON: %v", err)
+			sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
+			return
+		}
+
+		// Verificar se o ID está no corpo
+		if id, ok := requestData["id"].(string); ok {
+			bookID = id
+		} else {
+			sendErrorResponse(w, "ID do livro não fornecido", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Verificar se o payload é apenas para atualização de quantidade
+	var requestData map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &requestData); err != nil {
+		log.Printf("Erro ao decodificar JSON para map: %v", err)
 		sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
 		return
 	}
 
-	// Log detalhado para debug
-	log.Printf("DEBUG - Livro recebido para atualização - ID: %s, Nome: %s", book.ID, book.Name)
-	log.Printf("DEBUG - Quantidade recebida no payload JSON: %d (tipo: %T)", book.Quantity, book.Quantity)
+	quantityOnly := false
+
+	// Verificar se o payload contém apenas id e quantity
+	if len(requestData) == 2 && requestData["id"] != nil && requestData["quantity"] != nil {
+		quantityOnly = true
+	}
+
+	// Caso especial para atualizações apenas de quantidade
+	if quantityOnly {
+		log.Printf("DEBUG - Detectada atualização apenas de quantidade para o livro: %s", bookID)
+
+		quantityValue, ok := requestData["quantity"].(float64)
+		if !ok {
+			log.Printf("DEBUG - Quantidade inválida no payload: %v (tipo: %T)", requestData["quantity"], requestData["quantity"])
+			sendErrorResponse(w, "Formato de quantidade inválido", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("DEBUG - QUANTIDADE: Valor float64 da requisição: %v", quantityValue)
+
+		// Conversão para int sem manipulação
+		newQuantity := int(quantityValue)
+		log.Printf("DEBUG - QUANTIDADE: Após conversão para int: %d", newQuantity)
+
+		log.Printf("DEBUG - Atualizando apenas quantidade - ID: %s, Nova quantidade: %d", bookID, newQuantity)
+
+		// Verificar se o livro existe
+		var exists bool
+		if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM livros WHERE id = $1)", bookID).Scan(&exists); err != nil {
+			log.Printf("Erro ao verificar existência do livro: %v", err)
+			sendErrorResponse(w, "Erro ao verificar existência do livro", http.StatusInternalServerError)
+			return
+		}
+
+		if !exists {
+			sendErrorResponse(w, "Livro não encontrado", http.StatusNotFound)
+			return
+		}
+
+		// Obter quantidade atual para debug
+		var currentQuantity int
+		if err := h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", bookID).Scan(&currentQuantity); err == nil {
+			log.Printf("DEBUG - Quantidade atual no banco antes de atualizar: %d, Nova quantidade: %d", currentQuantity, newQuantity)
+		}
+
+		// Validar nova quantidade
+		if newQuantity <= 0 {
+			log.Printf("DEBUG - QUANTIDADE: Rejeitada por ser <= 0: %d", newQuantity)
+			sendErrorResponse(w, "A quantidade deve ser maior que zero", http.StatusBadRequest)
+			return
+		}
+
+		// Executar atualização direta da quantidade - IMPORTANTE: sem nenhuma manipulação
+		query := "UPDATE livros SET quantity = $1 WHERE id = $2"
+
+		log.Printf("DEBUG - Executando query direta para quantidade: %s - Params: [%d, %s]", query, newQuantity, bookID)
+
+		// IMPORTANTE: Verificar tipo da coluna quantity no banco
+		var columnType string
+		err = h.db.QueryRow("SELECT data_type FROM information_schema.columns WHERE table_name = 'livros' AND column_name = 'quantity'").Scan(&columnType)
+		if err == nil {
+			log.Printf("DEBUG - QUANTIDADE: Tipo da coluna no banco: %s", columnType)
+		} else {
+			log.Printf("DEBUG - QUANTIDADE: Erro ao verificar tipo da coluna: %v", err)
+		}
+
+		result, err := h.db.Exec(query, newQuantity, bookID)
+		if err != nil {
+			log.Printf("Erro ao atualizar quantidade: %v", err)
+			sendErrorResponse(w, "Erro ao atualizar quantidade", http.StatusInternalServerError)
+			return
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			sendErrorResponse(w, "Nenhum livro foi atualizado", http.StatusNotFound)
+			return
+		}
+
+		// Verificar quantidade após atualização
+		var finalQuantity int
+		if err := h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", bookID).Scan(&finalQuantity); err != nil {
+			log.Printf("Erro ao verificar quantidade final: %v", err)
+		} else {
+			log.Printf("DEBUG - QUANTIDADE: Quantidade após atualização diretamente do banco: %d", finalQuantity)
+			log.Printf("DEBUG - ANÁLISE DETALHADA: Quantidade solicitada: %d, Quantidade final no banco: %d, Razão: %.4f",
+				newQuantity, finalQuantity, float64(finalQuantity)/float64(newQuantity))
+
+			// Verificar se a quantidade no banco é diferente da solicitada
+			if finalQuantity != newQuantity {
+				log.Printf("DEBUG - ALERTA: Quantidade no banco (%d) diferente da solicitada (%d)!", finalQuantity, newQuantity)
+
+				// Tentar novamente com uma abordagem diferente, usando prepared statement
+				stmt, err := h.db.Prepare("UPDATE livros SET quantity = $1 WHERE id = $2")
+				if err != nil {
+					log.Printf("DEBUG - Erro ao preparar statement: %v", err)
+				} else {
+					defer stmt.Close()
+					_, err = stmt.Exec(newQuantity, bookID)
+					if err != nil {
+						log.Printf("DEBUG - Erro na segunda tentativa com prepared statement: %v", err)
+					} else {
+						// Verificar se a segunda tentativa funcionou
+						h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", bookID).Scan(&finalQuantity)
+						log.Printf("DEBUG - QUANTIDADE: Após segunda tentativa: %d", finalQuantity)
+					}
+				}
+			}
+		}
+
+		// Retornar resposta com informações da atualização
+		response := struct {
+			ID           string `json:"id"`
+			RequestedQty int    `json:"requested_quantity"`
+			FinalQty     int    `json:"final_quantity"`
+			Success      bool   `json:"success"`
+			Message      string `json:"message,omitempty"`
+		}{
+			ID:           bookID,
+			RequestedQty: newQuantity,
+			FinalQty:     finalQuantity,
+			Success:      finalQuantity == newQuantity,
+		}
+
+		if finalQuantity != newQuantity {
+			response.Message = fmt.Sprintf("A quantidade foi atualizada, mas com um valor diferente do solicitado. Solicitado: %d, Final: %d",
+				newQuantity, finalQuantity)
+		} else {
+			response.Message = "Quantidade atualizada com sucesso"
+		}
+
+		// Verificar novamente o valor no banco antes de enviar a resposta
+		var checkQuantity int
+		if err := h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", bookID).Scan(&checkQuantity); err == nil {
+			log.Printf("DEBUG - QUANTIDADE: Verificação final antes da resposta: %d", checkQuantity)
+			if checkQuantity != finalQuantity {
+				log.Printf("DEBUG - ALERTA: Valor mudou entre a atualização e a resposta! Anterior: %d, Atual: %d",
+					finalQuantity, checkQuantity)
+				response.FinalQty = checkQuantity
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Se chegou aqui, é uma atualização normal de livro (não apenas da quantidade)
+	var book models.Book
+	if err := json.NewDecoder(bytes.NewBuffer(bodyBytes)).Decode(&book); err != nil {
+		log.Printf("Erro ao decodificar JSON para struct Book: %v", err)
+		sendErrorResponse(w, "Erro ao ler dados", http.StatusBadRequest)
+		return
+	}
 
 	// Verificar se o ID foi fornecido
 	if book.ID == "" {
@@ -385,7 +580,8 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 	query := `UPDATE livros SET name = $1, quantity = $2, genre_id = $3, author = $4 WHERE id = $5`
 
 	// Adicionar log para debug
-	log.Printf("DEBUG - Quantidade sendo enviada para o banco de dados: %d", book.Quantity)
+	log.Printf("DEBUG - Query de atualização completa: %s - Params: [%s, %d, %v, %s, %s]",
+		query, book.Name, book.Quantity, book.GenreID, book.Author, book.ID)
 
 	result, err := h.db.Exec(query, book.Name, book.Quantity, book.GenreID, book.Author, book.ID)
 	if err != nil {
@@ -426,12 +622,11 @@ func (h *BookHandler) CreateAllBooks(w http.ResponseWriter, r *http.Request) {
 
 	createdBooks := []models.Book{}
 	for _, book := range books {
-		// Check if title is provided but name is not
 		if book.Name == "" && book.Title != "" {
 			book.Name = book.Title
 		}
 
-		if book.Name == "" || book.Quantity < 0 {
+		if book.Name == "" || book.Quantity <= 0 {
 			continue
 		}
 
@@ -476,5 +671,264 @@ func (h *BookHandler) CreateAllBooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateBookQuantity - Endpoint específico apenas para atualizar a quantidade
+func (h *BookHandler) UpdateBookQuantity(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Log detalhado da requisição
+	log.Printf("ROTA ESPECIAL - UpdateBookQuantity: Método=%s, ContentType=%s",
+		r.Method, r.Header.Get("Content-Type"))
+
+	// Verificar método HTTP
+	if r.Method != "POST" {
+		log.Printf("ROTA ESPECIAL - Método incorreto: %s (esperado POST)", r.Method)
+		sendErrorResponse(w, fmt.Sprintf("Método %s não permitido para esta rota", r.Method), http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Capturar o payload bruto
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("ROTA ESPECIAL - Erro ao ler corpo: %v", err)
+		sendErrorResponse(w, "Erro ao ler dados da requisição", http.StatusBadRequest)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	// Log detalhado do payload recebido
+	log.Printf("ROTA ESPECIAL - Payload bruto: %s", string(bodyBytes))
+
+	// Extrair apenas o ID e a quantidade
+	type quantityUpdate struct {
+		ID       string `json:"id"`
+		Quantity int    `json:"quantity"`
+	}
+
+	var update quantityUpdate
+	if err := json.Unmarshal(bodyBytes, &update); err != nil {
+		log.Printf("ROTA ESPECIAL - Erro ao decodificar: %v - Payload: %s", err, string(bodyBytes))
+		sendErrorResponse(w, "Formato inválido. Esperado: {\"id\":\"...\", \"quantity\":N}", http.StatusBadRequest)
+		return
+	}
+
+	// Validar dados recebidos
+	if update.ID == "" {
+		log.Printf("ROTA ESPECIAL - ID não fornecido")
+		sendErrorResponse(w, "ID do livro não fornecido", http.StatusBadRequest)
+		return
+	}
+
+	if update.Quantity <= 0 {
+		log.Printf("ROTA ESPECIAL - Quantidade inválida: %d", update.Quantity)
+		sendErrorResponse(w, "A quantidade deve ser maior que zero", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("ROTA ESPECIAL - Processando: ID=%s, Quantidade=%d", update.ID, update.Quantity)
+
+	// Verificar se o livro existe
+	var exists bool
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM livros WHERE id = $1)", update.ID).Scan(&exists); err != nil {
+		log.Printf("ROTA ESPECIAL - Erro ao verificar existência: %v", err)
+		sendErrorResponse(w, "Erro ao verificar existência do livro", http.StatusInternalServerError)
+		return
+	}
+
+	if !exists {
+		log.Printf("ROTA ESPECIAL - Livro não encontrado: %s", update.ID)
+		sendErrorResponse(w, "Livro não encontrado", http.StatusNotFound)
+		return
+	}
+
+	// Verificar quantidade atual no banco
+	var currentQuantity int
+	if err := h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", update.ID).Scan(&currentQuantity); err != nil {
+		log.Printf("ROTA ESPECIAL - Erro ao obter quantidade atual: %v", err)
+	} else {
+		log.Printf("ROTA ESPECIAL - Quantidade atual no banco: %d, Nova quantidade solicitada: %d",
+			currentQuantity, update.Quantity)
+	}
+
+	// Usar uma query SQL direta que APENAS atualiza a quantidade
+	query := "UPDATE livros SET quantity = $1 WHERE id = $2"
+
+	log.Printf("ROTA ESPECIAL - Executando query: %s com [%d, %s]", query, update.Quantity, update.ID)
+
+	// Executar a query
+	result, err := h.db.Exec(query, update.Quantity, update.ID)
+	if err != nil {
+		log.Printf("ROTA ESPECIAL - Erro na atualização: %v", err)
+		sendErrorResponse(w, "Erro ao atualizar quantidade", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Printf("ROTA ESPECIAL - Nenhuma linha afetada")
+		sendErrorResponse(w, "Nenhum livro foi atualizado", http.StatusNotFound)
+		return
+	}
+
+	log.Printf("ROTA ESPECIAL - Atualização concluída, %d linhas afetadas", rowsAffected)
+
+	// Verificar a quantidade após a atualização
+	var finalQuantity int
+	if err := h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", update.ID).Scan(&finalQuantity); err != nil {
+		log.Printf("ROTA ESPECIAL - Erro ao verificar quantidade final: %v", err)
+	} else {
+		log.Printf("ROTA ESPECIAL - Quantidade APÓS atualização: %d", finalQuantity)
+
+		// Verificar se a quantidade foi atualizada corretamente
+		if finalQuantity != update.Quantity {
+			log.Printf("ROTA ESPECIAL - ATENÇÃO: Valor no banco (%d) diferente do solicitado (%d)",
+				finalQuantity, update.Quantity)
+		}
+	}
+
+	// Retornar resposta
+	response := struct {
+		ID           string `json:"id"`
+		RequestedQty int    `json:"requested_quantity"`
+		FinalQty     int    `json:"final_quantity"`
+		Success      bool   `json:"success"`
+		Message      string `json:"message,omitempty"`
+		OriginalQty  int    `json:"original_quantity"`
+	}{
+		ID:           update.ID,
+		RequestedQty: update.Quantity,
+		FinalQty:     finalQuantity,
+		Success:      finalQuantity == update.Quantity,
+		OriginalQty:  currentQuantity,
+	}
+
+	if finalQuantity != update.Quantity {
+		response.Message = fmt.Sprintf("Atenção: Valor no banco (%d) diferente do solicitado (%d)",
+			finalQuantity, update.Quantity)
+	} else {
+		response.Message = "Quantidade atualizada com sucesso"
+	}
+
+	log.Printf("ROTA ESPECIAL - Enviando resposta: %+v", response)
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateQuantityDirect - Método simples para atualizar a quantidade via query params
+func (h *BookHandler) UpdateQuantityDirect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Obter parâmetros da consulta
+	bookID := r.URL.Query().Get("id")
+	quantityStr := r.URL.Query().Get("quantity")
+
+	log.Printf("MÉTODO DIRETO - Recebido: ID=%s, Quantidade=%s", bookID, quantityStr)
+
+	// Validar ID
+	if bookID == "" {
+		log.Printf("MÉTODO DIRETO - ID não fornecido")
+		sendErrorResponse(w, "ID do livro não fornecido", http.StatusBadRequest)
+		return
+	}
+
+	// Validar e converter quantidade
+	quantity, err := strconv.Atoi(quantityStr)
+	if err != nil || quantity <= 0 {
+		log.Printf("MÉTODO DIRETO - Quantidade inválida: %s", quantityStr)
+		sendErrorResponse(w, "Quantidade inválida. Deve ser um número maior que zero.", http.StatusBadRequest)
+		return
+	}
+
+	// Verificar se o livro existe
+	var exists bool
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM livros WHERE id = $1)", bookID).Scan(&exists); err != nil {
+		log.Printf("MÉTODO DIRETO - Erro ao verificar livro: %v", err)
+		sendErrorResponse(w, "Erro ao verificar existência do livro", http.StatusInternalServerError)
+		return
+	}
+
+	if !exists {
+		log.Printf("MÉTODO DIRETO - Livro não encontrado: %s", bookID)
+		sendErrorResponse(w, "Livro não encontrado", http.StatusNotFound)
+		return
+	}
+
+	// Obter quantidade atual para comparação
+	var currentQuantity int
+	if err := h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", bookID).Scan(&currentQuantity); err == nil {
+		log.Printf("MÉTODO DIRETO - Quantidade atual: %d, Nova quantidade: %d", currentQuantity, quantity)
+	}
+
+	// MODIFICAÇÃO IMPORTANTE: Usar um comando SQL preparado para garantir que o valor seja exatamente como fornecido
+	stmt, err := h.db.Prepare("UPDATE livros SET quantity = $1 WHERE id = $2")
+	if err != nil {
+		log.Printf("MÉTODO DIRETO - Erro ao preparar statement: %v", err)
+		sendErrorResponse(w, "Erro interno ao preparar atualização", http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	// Executar a atualização com o valor exato recebido
+	log.Printf("MÉTODO DIRETO - Executando statement com exatamente: [%d, %s]", quantity, bookID)
+	result, err := stmt.Exec(quantity, bookID)
+	if err != nil {
+		log.Printf("MÉTODO DIRETO - Erro na atualização: %v", err)
+		sendErrorResponse(w, "Erro ao atualizar quantidade", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Printf("MÉTODO DIRETO - Nenhuma linha afetada")
+		sendErrorResponse(w, "Nenhum livro foi atualizado", http.StatusNotFound)
+		return
+	}
+
+	// Verificar quantidade final após atualização
+	var finalQuantity int
+	if err := h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", bookID).Scan(&finalQuantity); err != nil {
+		log.Printf("MÉTODO DIRETO - Erro ao verificar quantidade final: %v", err)
+	} else {
+		log.Printf("MÉTODO DIRETO - Quantidade final: %d", finalQuantity)
+
+		// Verificar se houve discrepância
+		if finalQuantity != quantity {
+			log.Printf("MÉTODO DIRETO - ALERTA! Valor no banco (%d) diferente do solicitado (%d). Tentando correção...",
+				finalQuantity, quantity)
+
+			// Tentar uma última vez com consulta direta
+			_, directErr := h.db.Exec("UPDATE livros SET quantity = $1 WHERE id = $2", quantity, bookID)
+			if directErr == nil {
+				// Verificar novamente
+				var checkQuantity int
+				h.db.QueryRow("SELECT quantity FROM livros WHERE id = $1", bookID).Scan(&checkQuantity)
+				log.Printf("MÉTODO DIRETO - Após correção final: %d", checkQuantity)
+				finalQuantity = checkQuantity
+			}
+		}
+	}
+
+	// Retornar resposta de sucesso com dados atualizados
+	response := struct {
+		ID           string `json:"id"`
+		Quantity     int    `json:"quantity"`
+		RequestedQty int    `json:"requested_quantity"`
+		OriginalQty  int    `json:"original_quantity"`
+		Success      bool   `json:"success"`
+		Message      string `json:"message"`
+	}{
+		ID:           bookID,
+		Quantity:     finalQuantity,
+		RequestedQty: quantity,
+		OriginalQty:  currentQuantity,
+		Success:      finalQuantity == quantity,
+		Message:      fmt.Sprintf("Quantidade atualizada para %d", finalQuantity),
+	}
+
+	log.Printf("MÉTODO DIRETO - Resposta: %+v", response)
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
