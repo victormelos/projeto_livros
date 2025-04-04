@@ -1,11 +1,14 @@
-package handlers
+package http
+
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
 func TestGetAllBooks(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

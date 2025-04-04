@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"projeto_livros/database"
-	"projeto_livros/handlers"
-	"projeto_livros/middleware"
+	handlers "projeto_livros/internal/delivery/http"
+	"projeto_livros/internal/delivery/middleware"
+	"projeto_livros/internal/repository/database"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
