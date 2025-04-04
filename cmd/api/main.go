@@ -93,7 +93,7 @@ func main() {
 // FileServer é uma função adaptada para servir arquivos estáticos
 func FileServer(r chi.Router, path string, root http.FileSystem) {
 	if path != "/" && path[len(path)-1] != '/' {
-		r.Get(path, http.RedirectHandler(path+"/", 301).ServeHTTP)
+		r.Get(path, http.RedirectHandler(path+"/", http.StatusMovedPermanently).ServeHTTP)
 		path += "/"
 	}
 	path += "*"
